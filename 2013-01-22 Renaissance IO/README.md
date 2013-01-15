@@ -1,4 +1,4 @@
-# 2013-01-22 Rennaissance IO Conference
+# 2013-01-22 Renaissance IO Conference
 
 ### 2013-01-22 Renaissance IO Bluegiga Presentation.key
 

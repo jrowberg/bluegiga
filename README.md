@@ -14,4 +14,4 @@ You can contact me directly at jeff dot rowberg at bluegiga dot com.
 
 ### Repository Material List
 
-* 2013-01-22 Rennaissance IO
+* 2013-01-22 Renaissance IO
