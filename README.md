@@ -12,6 +12,6 @@ can help tremendously in getting started with our products.
 
 You can contact me directly at jeff dot rowberg at bluegiga dot com.
 
-## Repository Material List
+### Repository Material List
 
 * 2013-01-22 Rennaissance IO

@@ -8,6 +8,20 @@ Presentation slides in Keynote format.
 
 Presentation slides in Microsoft Powerpoint 2010 format.
 
+### BLE_Stack_API_Reference_v2.2.pdf
+
+Full BGAPI reference manual. Heavy on technical details, light on example code.
+
+### BLE112_Datasheet.pdf
+
+Official datasheet for the BLE112 module.
+
+### DKBLE112_Schematic.pdf
+
+Complete schematic for the DKBLE112 development kit board, including details
+about the SPI display and accelerometer on board. Excellent reference for your
+own projects.
+
 ### BLEMailbox_Xcode.zip
 
 Xcode project to go along with the light-sensitive mail delivery sensor demo
