@@ -8,6 +8,11 @@ Presentation slides in Keynote format.
 
 Presentation slides in Microsoft Powerpoint 2010 format.
 
+### BLE_Application_Note_Glucose_Sensor.pdf
+
+Application Note detailing the complete Glucose Sensor demo project discussed
+in the Bluegiga Renaissance IO presentation.
+
 ### BLE_Stack_API_Reference_v2.2.pdf
 
 Full BGAPI reference manual. Heavy on technical details, light on example code.
@@ -32,7 +37,7 @@ project created for the BLE112 Bluegiga module. This compiles without error
 on the latest version of Xcode and the latest release version of iOS (6.0.2)
 as of January 14, 2013.
 
-### glucose_demo_bgscript.zip
+### glucose_sensor_bgscript.zip
 
 Glucose sensor demo project, as shown towards the end of my presentation. This
 implements a fairly complete glucose sensor profile using only the features of
