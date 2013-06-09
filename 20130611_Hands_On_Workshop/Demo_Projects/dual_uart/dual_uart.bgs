@@ -1,0 +1,68 @@
+# ================================================================
+# BGScript demo: Dual UART port usage
+# Jeff Rowberg <jeff.rowberg@bluegiga.com>
+#
+# This script uses RX watermarks to detect incoming data on either
+# UART0 or UART1 (both @ 115200), then echos any read data back
+# out the *other* UART port. So, bytes read from UART0 will be
+# sent out UART1, and bytes read from UART1 will be sent back out
+# UART0.
+# ----------------------------------------------------------------
+#
+# CHANGELOG:
+#   2013-05-31 - Initial release
+#
+# ================================================================
+
+# NOTE: this project does NOT advertise or deal with any BLE connectivity.
+#       Its sole purpose is to demonstrate basic dual UART usage.
+
+dim in(20)          # endpoint data in buffer
+dim in_len          # endpoint data in buffer size
+dim result          # endpoint RX error code
+
+event system_boot(major, minor, patch, build, ll_version, protocol, hw)
+    # enable RX watermark on UART0 (no TX watermark)
+    call system_endpoint_set_watermarks(system_endpoint_uart0, 1, 0)
+
+    # enable RX watermark on UART1 (no TX watermark)
+    call system_endpoint_set_watermarks(system_endpoint_uart1, 1, 0)
+
+    # DEBUG OUTPUT: ready
+    call system_endpoint_tx(system_endpoint_uart0, 15, "\r\nUART0 READY\r\n")
+    call system_endpoint_tx(system_endpoint_uart1, 15, "\r\nUART1 READY\r\n")
+end
+
+event system_endpoint_watermark_rx(endpoint, size)
+    in_len = size
+
+    # check for incoming UART0 data
+    if endpoint = system_endpoint_uart0 then
+        # disable RX watermark on UART0
+        call system_endpoint_set_watermarks(system_endpoint_uart0, 0, $ff)
+        
+        # read available data from UART0
+        call system_endpoint_rx(system_endpoint_uart0, in_len)(result, in_len, in(0:in_len))
+        
+        # write data back out UART1
+        call system_endpoint_tx(system_endpoint_uart1, in_len, in(0:in_len))
+
+        # set RX watermark on UART0
+        call system_endpoint_set_watermarks(system_endpoint_uart0, 1, $ff)
+    end if
+
+    # check for incoming UART1 data
+    if endpoint = system_endpoint_uart1 then
+        # disable RX watermark on UART1
+        call system_endpoint_set_watermarks(system_endpoint_uart1, 0, $ff)
+        
+        # read available data from UART1
+        call system_endpoint_rx(system_endpoint_uart1, in_len)(result, in_len, in(0:in_len))
+        
+        # write data back out UART0
+        call system_endpoint_tx(system_endpoint_uart0, in_len, in(0:in_len))
+
+        # set RX watermark on UART1
+        call system_endpoint_set_watermarks(system_endpoint_uart1, 1, $ff)
+    end if
+end

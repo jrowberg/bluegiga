@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<hardware>
+    <!-- enable sleep oscillator setting for low-power mode, using "30" (appropriate for dev kit) -->
+    <sleeposc enable="true" ppm="30" />
+    
+    <!-- disable USB interface to save power, since we don't need it -->
+    <!-- DO NOT FLASH THIS ONTO A BLED112 WITH USB DISABLED. YOU WILL BRICK IT. -->
+    <usb enable="false" />
+    
+    <!-- use default maximum power (+3dBm) and power amplifier bias (always 5) -->
+    <txpower power="15" bias="5" />
+    
+    <!-- enable USART0 in SPI master mode for LCD control -->
+	<usart channel="0" mode="spi_master" alternate="2" polarity="positive" phase="1" endianness="msb" baud="57600" endpoint="none" />
+
+    <!-- we're using BGScript, so make sure this is enabled -->
+	<script enable="true" />
+
+    <!-- enable DC/DC convertor control on P1_7 for current consumption optimization -->
+    <pmux regulator_pin="7" />
+
+    <!-- P0_0 and P0_1 will be used for interrupts -->
+    <port index="0" pull="down" />
+</hardware>

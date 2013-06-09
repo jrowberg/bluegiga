@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<hardware>
+    <!-- enable sleep oscillator setting for low-power mode, using "30" (appropriate for dev kit) -->
+    <sleeposc enable="true" ppm="30" />
+    
+    <!-- disable USB interface to save power, since we don't need it -->
+    <!-- DO NOT FLASH THIS ONTO A BLED112 WITH USB DISABLED. YOU WILL BRICK IT. -->
+    <usb enable="false" />
+
+    <!-- use default maximum power (+3dBm) and power amplifier bias (always 5) -->
+    <txpower power="15" bias="5" />
+
+    <!-- we're using BGScript, so make sure this is enabled -->
+    <script enable="true" />
+
+    <!-- do not enable slow_clock if you need reliable UART output at fast speeds. It will result in baud rate data errors. -->
+    <slow_clock enable="false" />
+
+    <!-- enable DC/DC convertor control on P1_7 for current consumption optimization -->
+    <pmux regulator_pin="7" />
+
+    <!-- USART 1 used for debug serial output in this demo -->
+    <!-- (make sure the RS232 switch is on and you're powering over USB if you want to leave this enabled) -->
+    <!--
+        Hardware flow control is DISABLED here because UART is used only for debugging,
+        and if we leave it enabled but nothing is connected to the UART port, then the
+        internal buffer fills up and eventually locks the module. In a production setting
+        where you actually care about the data going over the UART interface, you will
+        definitely want flow control to remain ENABLED (which is the default setting).
+    -->
+    <usart channel="1" alternate="1" baud="115200" endpoint="none" flow="false" />
+
+    <!-- P0_0, P0_1, and P1_6 will be used for interrupts. Port 2 interrupts are not supported. -->
+    <port index="0" pull="down" />
+    <port index="1" pull="down" />
+    <port index="2" pull="down" />
+</hardware>

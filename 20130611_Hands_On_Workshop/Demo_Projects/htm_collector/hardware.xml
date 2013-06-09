@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<hardware>
+    <sleeposc enable="true" ppm="30" />
+    <sleep enable="true" />
+    <txpower power="15" bias="5" />
+    <pmux regulator_pin="7" />
+    <script enable="true" />
+    
+    <!-- USART 1 used for debug serial output in this demo -->
+    <!-- (make sure the RS232 switch is on and you're powering over USB if you want to leave this enabled) -->
+    <!--
+        Hardware flow control is DISABLED here because UART is used only for debugging,
+        and if we leave it enabled but nothing is connected to the UART port, then the
+        internal buffer fills up and eventually locks the module. In a production setting
+        where you actually care about the data going over the UART interface, you will
+        definitely want flow control to remain ENABLED (which is the default setting).
+    -->
+    <usart channel="1" alternate="1" baud="115200" endpoint="none" flow="false" />
+</hardware>

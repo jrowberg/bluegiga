@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<configuration>
+
+    <!--
+        This GATT database definition implements the official Bluetooth SIG specification
+        for the Glucose profile, in the Glucose Sensor role:
+        
+            Glucose
+                http://developer.bluetooth.org/gatt/profiles/Pages/ProfileViewer.aspx?u=org.bluetooth.profile.glucose.xml
+            
+        It implements the following MANDATORY services:
+        
+            0x1808: Glucose
+                http://developer.bluetooth.org/gatt/services/Pages/ServiceViewer.aspx?u=org.bluetooth.service.glucose.xml
+            0x180A: Device Information
+                http://developer.bluetooth.org/gatt/services/Pages/ServiceViewer.aspx?u=org.bluetooth.service.device_information.xml
+        
+        The Glucose service implements the following MANDATORY characteristics:
+        
+            0x2A18: Glucose Measurement
+                http://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.glucose_measurement.xml
+            0x2A51: Glucose Feature
+                http://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.glucose_feature.xml
+            0x2A52: Record Access Control Point
+                http://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.record_access_control_point.xml
+            
+        The Glucose service implements the following OPTIONAL characteristics:
+        
+            0x2A34: Glucose Measurement Context
+                http://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.glucose_measurement_context.xml
+                
+        The Device Information service implements the following MANDATORY characteristics:
+        
+            0x2A29: Manufacturer Name String
+                http://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.manufacturer_name_string.xml
+            0x2A24: Model Number String
+                http://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.model_number_string.xml
+            0x2A23: System ID
+                http://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.system_id.xml
+            
+        Specification data is current as of 2012-10-15.
+    -->
+
+    <!-- 1800: org.bluetooth.service.generic_access -->
+    <service uuid="1800" id="generic_access">
+        <description>Generic Access</description>
+
+        <!-- 2A00: org.bluetooth.characteristic.gap.device_name -->
+        <characteristic uuid="2A00" id="c_device_name">
+            <description>Device Name</description>
+            <!-- glucose profile v1.0 optional spec: device_name is writable, not enabled here -->
+            <properties read="true" const="true" />
+            <!-- It's a good idea to keep this <= 19 characters, for proper display on iOS -->
+            <value>BGT Glucose Demo</value>
+        </characteristic>
+
+        <!-- 2A01: org.bluetooth.characteristic.gap.appearance -->
+        <characteristic uuid="2A01" id="c_appearance">
+            <description>Appearance</description>
+            <properties read="true" const="true" />
+            <!-- 1024: Generic Glucose Meter, Generic category -->
+            <value type="hex">0400</value>
+        </characteristic>
+        
+    </service>
+
+    <!-- 180A: org.bluetooth.service.device_information -->
+    <service uuid="180A" id="device_information">
+        <description>Device Information</description>
+    
+        <!-- 2A29: org.bluetooth.characteristic.manufacturer_name_string -->
+        <!-- (support for this characteristic is MANDATORY according to the profile spec) -->
+        <characteristic uuid="2A29" id="c_manufacturer_name">
+            <description>Manufacturer Name</description>
+            <properties read="true" const="true" />
+            <value>Bluegiga</value>
+        </characteristic>
+
+        <!-- 2A24: org.bluetooth.characteristic.model_number_string -->
+        <!-- (support for this characteristic is MANDATORY according to the profile spec) -->
+        <characteristic uuid="2A24" id="c_model_number">
+            <description>Model Number</description>
+            <properties read="true" const="true" />
+            <value>BG-BLE-GLUCOSE</value>
+        </characteristic>
+        
+        <!-- 2A25: org.bluetooth.characteristic.serial_number_string -->
+        <!-- (support for this characteristic is OPTIONAL according to the profile spec) -->
+        <characteristic uuid="2A25" id="c_serial_number">
+            <description>Serial Number</description>
+            <properties read="true" const="true" />
+            <value>123456789</value>
+        </characteristic>
+        
+        <!-- 2A27: org.bluetooth.characteristic.hardware_revision_string -->
+        <!-- (support for this characteristic is OPTIONAL according to the profile spec) -->
+        <characteristic uuid="2A27" id="c_hardware_revision_string">
+            <description>Hardware Revision String</description>
+            <properties read="true" const="true" />
+            <value>H1.0.0</value>
+        </characteristic>
+        
+        <!-- 2A26: org.bluetooth.characteristic.firmware_revision_string -->
+        <!-- (support for this characteristic is OPTIONAL according to the profile spec) -->
+        <characteristic uuid="2A26" id="c_firmware_revision_string">
+            <description>Firmware Revision String</description>
+            <properties read="true" const="true" />
+            <value>F1.0.0</value>
+        </characteristic>
+        
+        <!-- 2A28: org.bluetooth.characteristic.software_revision_string -->
+        <!-- (support for this characteristic is OPTIONAL according to the profile spec) -->
+        <characteristic uuid="2A28" id="c_software_revision_string">
+            <description>Software Revision String</description>
+            <properties read="true" const="true" />
+            <value>S1.0.0</value>
+        </characteristic>
+        
+        <!-- 2A23: org.bluetooth.characteristic.system_id -->
+        <!-- (support for this characteristic is MANDATORY according to the profile spec) -->
+        <characteristic uuid="2A23" id="c_system_id">
+            <description>System ID</description>
+            <properties read="true" const="true" />
+            <!--
+                Example:
+                If the system ID is based of a Bluetooth Device Address with a Company Identifier (OUI)
+                of 0x123456 and the Company Assigned Identifier is 0x9ABCDE, then the System Identifier
+                is required to be 0x123456FFFE9ABCDE.
+            -->
+            <value type="hex">112233FFFE778899</value>
+        </characteristic>
+        
+    </service>
+
+    <!-- 1808: org.bluetooth.service.glucose -->
+    <service uuid="1808" advertise="true">
+        <description>Glucose Service</description>
+        
+        <!-- 2A18: org.bluetooth.characteristic.glucose_measurement -->
+        <!-- (support for this characteristic is MANDATORY according to the profile spec) -->
+        <characteristic uuid="2A18" id="c_glucose_measurement">
+            <description>Glucose Measurement</description>
+            <properties notify="true" />
+            <!--
+                This characteristic value length and content depends on which data
+                is being reported at any given time, in accordance with the Bluetooth
+                SIG specification for the "glucose_measurement" characteristic. The
+                maximum possible length is 17 bytes. It must be notify-only. For more
+                information, see this web page:
+                
+                http://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.glucose_measurement.xml
+                
+                For this demo, this characteristic is updated on a ~1 second interval
+                inside the "hardware_adc_result()" event, as triggered by the
+                "hardware_soft_timer()" event.
+            -->
+            <value length="17" variable="true" />
+        </characteristic>
+
+        <!-- 2A34: org.bluetooth.characteristic.glucose_measurement_context -->
+        <!-- (support for this characteristic is OPTIONAL according to the profile spec) -->
+        <characteristic uuid="2A34" id="c_glucose_measurement_context">
+            <description>Glucose Measurement Context</description>
+            <properties notify="true" />
+            <!--
+                This characteristic value length and content depends on which data
+                is being reported at any given time, in accordance with the Bluetooth
+                SIG specification for the "glucose_measurement_context" characteristic.
+                The maximum possible length is 17 bytes. It must be notify-only. For
+                more information, see this web page:
+                
+                http://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.glucose_measurement_context.xml
+                
+                For this demo, this characteristic is updated on a ~1 second interval
+                inside the "hardware_adc_result()" event, as triggered by the
+                "hardware_soft_timer()" event.
+            -->
+            <value length="17" variable="true" />
+        </characteristic>
+
+        <!-- 2A51: org.bluetooth.characteristic.glucose_feature -->
+        <!-- (support for this characteristic is MANDATORY according to the profile spec) -->
+        <characteristic uuid="2A51" id="c_glucose_feature">
+            <description>Glucose Feature</description>
+            <!--
+                This characteristic holds a single 16-bit value, in accordance with the
+                Bluetooth SIG specification for the "glucose_feature" characteristic. It
+                must be read-only. For more information, see this web page:
+                
+                http://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.glucose_feature.xml
+
+                The bit structure of the "glucose_feature" characteristic value is as follows:
+     
+                    0: Low Battery Detection During Measurement Supported	
+                    1: Sensor Malfunction Detection Supported	
+                    2: Sensor Sample Size Supported	
+                    3: Sensor Strip Insertion Error Detection Supported	
+                    4: Sensor Strip Type Error Detection Supported	
+                    5: Sensor Result High-Low Detection Supported	
+                    6: Sensor Temperature High-Low Detection Supported	
+                    7: Sensor Read Interrupt Detection Supported	
+                    8: General Device Fault Supported	
+                    9: Time Fault Supported	
+                   10: Multiple Bond Supported	
+                11-15: RESERVED
+                
+                For this demo, we will pretend all features are supported, which is:
+                    0b0000 0111 1111 1111, or
+                    0x07FF
+
+                -->
+            <properties read="true" const="true" />
+            <value length="2" type="hex">07FF</value>
+        </characteristic>
+
+        <!-- 2A52: org.bluetooth.characteristic.record_access_control_point -->
+        <!-- (support for this characteristic is MANDATORY according to the profile spec) -->
+        <characteristic uuid="2A52" id="c_record_access_control_point">
+            <description>Record Access Control Point</description>
+            <properties indicate="true" write="true" authenticated_write="true" />
+            <!--
+                This characteristic value length and content depends on which data
+                is being reported at any given time, in accordance with the Bluetooth
+                SIG specification for the "record_access_control_point" characteristic.
+                For more information, see this web page:
+                
+                http://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.record_access_control_point.xml
+            -->
+            <value length="17" variable="true" />
+        </characteristic>
+        
+    </service>
+    
+    <!-- 180F: org.bluetooth.service.battery_service -->
+    <service uuid="180F" id="battery_service">
+        <description>Battery Service</description>
+        
+        <!-- 2A19: org.bluetooth.characteristic.battery_level -->
+        <characteristic uuid="2A19" id="c_battery_level">
+            <description>Battery Level</description>
+            <properties read="true" notify="true" />
+            <value length="1" type="hex" />
+            <!--
+                Note that this is NOT a "const" value, so it must be set by BGScript, or
+                else it will have an undefined value. This may seem counterintuitive, but
+                it has to do with memory management on a very limited system.
+            -->
+        </characteristic>
+
+    </service>
+    
+</configuration>

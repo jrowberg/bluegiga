@@ -1,0 +1,874 @@
+# ================================================================
+# BGScript implementation of org.bluetooth.profile.glucose profile
+# Jeff Rowberg <jeff.rowberg@bluegiga.com>
+# ----------------------------------------------------------------
+#
+# CHANGELOG:
+#   2013-01-19 - Small modifications for Glucose Profile compliance
+#   2013-01-04 - Fixed retrieved record length in uint8array parameters
+#   2012-12-12 - Improved connection update debug output
+#              - Disabled "script_timeout" so record access doesn't stop early
+#   2012-10-23 - Initial release
+#
+# ================================================================
+
+dim connected       # BLE connection status
+dim tick            # timer tick counter
+dim alternating     # toggles between +1 and -1 for simple "time passage" animation on display
+dim wait_ticks      # countdown for how many ticks to wait before overwriting display message with BLE status
+
+dim measure_buf(17) # buffer for building measurement values (17 is max possible characteristic length in this profile)
+dim context_buf(17) # buffer for building context values (17 is max possible characteristic length in this profile)
+dim seq_num         # quick access to numeric report sequence number
+dim tmp_float       # temporary container for scaled input measurement
+
+dim report_buf(32)  # holds report buffer for reading or writing to/from PS Keys
+dim config_buf(6)   # holds configuration data, stored in PS Key 0x807F
+dim report_count    # report count used during stored report retrieval
+dim head_index      # head index used during stored report retrieval
+dim report_index    # index for reading first/last/all stored reports
+dim loop_index      # while loop index for reading all stored reports
+dim result          # result code from PS Key read function
+dim len1            # length from PS Key read function
+
+dim battery_level   # used for calculating the battery level from ADC reading
+
+# PS Key configuration data byte structure is as follows:
+# [0-1] = 0xB8B8, to indicate we have properly initialized PS Keys for this demo
+#   [2] = # of records (0-126, or 0x00-0x7E)
+#   [3] = ring buffer "head" index
+# [4-5] = sequence number (16-bit value used in glucose measurements)
+#
+# Since we only have 127 PS Keys available for user data and one is used for the
+# main persistent config, that leaves only 126 keys to store patient records.
+# This demo script implements a simple ring buffer, where once we fill up the
+# entire 126-key set, we just start overwriting from the beginning. The "head"
+# index contains the NEXT AVAILABLE key position, the one we will write to when
+# we get a new glucose reading. Using the # of records (config[2]) combined with
+# the head index position (config[3]), we can always tell where the tail is.
+
+# IMPLEMENTATION NOTE:
+# The above variables are used to imitate a simple records database using the
+# BLE112's internal PS Keys. The Glucose profile must implement the Record Access
+# Control Point characteristic, which provides random access to stored glucose
+# records. A true implementation of this would likely use either an external host
+# microcontroller and the BG API instead of BGScript or else would use an external
+# EEPROM module connected over SPI or I2C for storing the records.
+#
+# Ideally, a real glucose sensor would also include a real-time clock module for
+# keeping the date and time current. This demo uses a fixed value instead.
+
+event system_boot(major, minor, patch, build, ll_version, protocol, hw)
+    # initialize connection status as DISCONNECTED
+    connected = 0
+    
+    # set tick counter to zero
+    tick = 0
+    
+    # set sequence number to zero
+    seq_num = 0
+    
+    # initialize the alternating animation state
+    alternating = 1
+    
+    # initialize countdown ticks to 0 (no special message to show temporarily on display)
+    wait_ticks = 0
+    
+    # set advertisement interval to 20-30ms, and use all advertisement channels
+    # (note min/max parameters are in units of 625 uSec)
+    call gap_set_adv_parameters(32, 48, 7)
+
+    # put module into discoverable/connectable mode
+    call gap_set_mode(gap_general_discoverable, gap_undirected_connectable)
+    
+    # enable bonding (encrypted links)
+    call sm_set_bondable_mode(1)
+    
+    # enable interrupt on P0_0 rising edge (triggers glucose reading)
+    # also on P0_1 rising edge (triggers PS key userdata reset)
+    # (parameters are port=0, bitmask=0b00000011, edge=rising)
+    call hardware_io_port_config_irq(0, 3, 0)
+    
+    # configure timer for 1-second intervals
+    call hardware_set_soft_timer(32768, 0, 0)
+
+    # NOTE: the "glucose_feature" characteristic value *could* be set here, inside the
+    # system_boot event. However, as this is a read-only value and something that is a
+    # representation of hardware capabilities and not intended to change during normal
+    # usage, it is simpler just to define it as a const read-only value right inside the
+    # GATT database definition. The structure of this 16-bit set of flags is documented
+    # inside the "gatt.xml" file along with this project. You can also read the official
+    # Bluetooth SIG description of the characteristic here:
+    #
+    # http://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.glucose_feature.xml
+    
+    # DEVKIT UART OUTPUT: welcome message
+    call system_endpoint_tx(5, 33, "\r\n=============================\r\n")
+    call system_endpoint_tx(5, 31, "Bluegiga Glucose Demo Started\r\n")
+
+    # read configuration from PS Key 0x807F
+    call flash_ps_load($807F)(result, len1, config_buf(0:6))
+    
+    # make sure glucose profile demo is initialized
+    if config_buf(0:2) != $B8B8 then
+        # first run on this hardware, so initialize record count = 0, head index = 0
+        # (P0_1 button press does the same thing)
+        config_buf(0:2) = $B8B8 # unique ID 
+        config_buf(2:2) = $0000 # report count = 0, head index = 0
+        config_buf(4:2) = $0000 # sequence number = 0 (16-bit)
+        call flash_ps_save($807F, 6, config_buf(0:6))
+
+        # DEVKIT UART OUTPUT: config initialized
+        call system_endpoint_tx(5, 20, "Config initialized\r\n")
+    else
+        # DEVKIT UART OUTPUT: config exists
+        call system_endpoint_tx(5, 15, "Config loaded\r\n")
+    end if
+    seq_num = config_buf(4:1) + (config_buf(5:1) * 256)
+    
+    # initialize battery status at 100% so we know it's working
+    call attributes_write(c_battery_level, 0, 1, 100)
+
+    # DEVKIT UART OUTPUT: ready message
+    call system_endpoint_tx(5, 7, "READY\r\n")
+    
+    # DEVKIT DISPLAY OUTPUT: ready message
+    #set the display to command mode
+    call hardware_io_port_write(1, $7, $1)
+    call hardware_io_port_config_direction(1, $7)
+    
+    call hardware_spi_transfer(0, 11, "\x30\x30\x30\x39\x14\x56\x6d\x70\x0c\x06\x01")   # initialize the display
+    call hardware_spi_transfer(0, 1, "\x80")    # set the display to data mode
+    call hardware_io_port_write(1, $7, $3)      # write welcome message
+    call hardware_spi_transfer(0, 16, "Glucose Demo    ")
+    
+    call hardware_io_port_write(1, $7, $1)      # set the display to command mode
+    call hardware_spi_transfer(0, 1, "\xc0")    # change display cursor pos
+    call hardware_io_port_write(1, $7, $3)      # set the display to data mode
+    call hardware_spi_transfer(0, 16, "Advertising     ")  # write connection status to display
+end
+
+event connection_status(connection, flags, address, address_type, conn_interval, timeout, latency, bonding)
+    # check for "new connection established" event
+    if (flags & $05) = $05 then
+        # set connection status to CONNECTED
+        connected = 1
+
+        # DEVKIT UART OUTPUT: connected
+        call system_endpoint_tx(5, 13, "\r\nCONNECTED\r\n")
+
+        # DEVKIT DISPLAY OUTPUT: connected
+        call hardware_io_port_write(1, $7, $1)      # set the display to command mode
+        call hardware_spi_transfer(0, 1, "\xc0")    # change display cursor pos
+        call hardware_io_port_write(1, $7, $3)      # set the display to data mode
+        call hardware_spi_transfer(0, 15, "Connected      ")    # write connection status to display
+    end if
+    
+    # check for "encrypted" status
+    if (flags & $02) = $02 then
+        # DEVKIT UART OUTPUT: encrypted
+        call system_endpoint_tx(5, 13, "\r\nENCRYPTED\r\n")
+
+        # DEVKIT DISPLAY OUTPUT: encrypted
+        call hardware_io_port_write(1, $7, $1)      # set the display to command mode
+        call hardware_spi_transfer(0, 1, "\xc0")    # change display cursor pos
+        call hardware_io_port_write(1, $7, $3)      # set the display to data mode
+        call hardware_spi_transfer(0, 15, "Encrypted      ")    # write connection status to display
+    end if
+end
+
+event connection_disconnected(handle, result)
+    # set connection status to DISCONNECTED
+    connected = 0
+    
+    # reset tick counter to zero for advertising behavior (30s changes)
+    tick = 0
+    
+    # DEVKIT UART OUTPUT: disconnected
+    call system_endpoint_tx(5, 16, "\r\nDISCONNECTED\r\n")
+
+    # DEVKIT DISPLAY OUTPUT: disconnected (advertising)
+    call hardware_io_port_write(1, $7, $1)      # set the display to command mode
+    call hardware_spi_transfer(0, 1, "\xc0")    # change display cursor pos
+    call hardware_io_port_write(1, $7, $3)      # set the display to data mode
+    call hardware_spi_transfer(0, 15, "Advertising    ")    # write connection status to display
+
+    # set advertisement interval back to 20-30ms, use all advertisement channels
+    # (note min/max parameters are in units of 625 uSec)
+    call gap_set_adv_parameters(32, 48, 7)
+
+    # put module back into discoverable/connectable mode
+    # (also resumes advertising based on parameters)
+    call gap_set_mode(gap_general_discoverable, gap_undirected_connectable)
+end
+
+# catch remote write of characteristic value
+event attributes_value(connection, reason, handle, offset, value_len, value_data)
+    # DEVKIT UART OUTPUT: attribute written
+    call system_endpoint_tx(5, 21, "\r\nAttribute written\r\n")
+
+    # DEVKIT DISPLAY OUTPUT: report request
+    #call hardware_io_port_write(1, $7, $1)      # set the display to command mode
+    #call hardware_spi_transfer(0, 1, "\xc0")    # change display cursor pos
+    #call hardware_io_port_write(1, $7, $3)      # set the display to data mode
+    #call hardware_spi_transfer(0, 15, "Report req OK  ")    # write connection status to display
+    #wait_ticks = 3
+
+    if handle = c_record_access_control_point then
+        # remote client requested some operation
+        
+        # value_data[0] = Opcode
+        #   VALUE LIST:
+        #       0 = Reserved for future use (Operator: N/A)
+        #       1 = Report stored records (Operator: Value from Operator Table)
+        #       2 = Delete stored records (Operator: Value from Operator Table)
+        #       3 = Abort operation (Operator: Null 'value of 0x00 from Operator Table')
+        #       4 = Report number of stored records (Operator: Value from Operator Table)
+        #       5 = Number of stored records response (Operator: Null 'value of 0x00 from Operator Table')
+        #       6 = Response Code (Operator: Null 'value of 0x00 from Operator Table')
+        #   7-255 = RESERVED
+            
+        # value_data[1] = Operator:
+        #   VALUE LIST:
+        #       0   Null
+        #       1   All records
+        #       2   Less than or equal to
+        #       3   Greater than or equal to
+        #       4   Within range of (inclusive)
+        #       5   First record (i.e. oldest record)
+        #       6   Last record (i.e. most recent record)
+        #   7-255   Reserved for future use        
+        
+        # value_data[2...] = Operand:
+        
+        # check for "Report stored records" opcode (1)
+        if value_data(0:1) = 1 then
+            # check for "All records" operator (1)
+            if value_data(1:1) = 1 then
+                # DEVKIT DISPLAY OUTPUT: request all
+                call hardware_io_port_write(1, $7, $1)      # set the display to command mode
+                call hardware_spi_transfer(0, 1, "\xc0")    # change display cursor pos
+                call hardware_io_port_write(1, $7, $3)      # set the display to data mode
+                call hardware_spi_transfer(0, 15, "Req All OK     ")    # write request status to display
+                wait_ticks = 3
+                
+                # transmit all record available
+                if config_buf(2:1) > 0 then
+                    report_count = config_buf(2:1)
+                    head_index = config_buf(3:1)
+                    report_index = head_index - report_count                                        # first index is ring buffer head index - report count
+                    if report_index < 0 then
+                        report_index = report_index + 126                                           # boundary checking and adjustment
+                    end if
+                    loop_index = 0
+                    while loop_index < report_count
+                        call flash_ps_load($8000 + report_index)(result, len1, report_buf(0:32))        # read last stored record
+                        memcpy(measure_buf(0), report_buf(0), 15)                                       # copy stored measurement
+                        measure_buf(15:2) = $0000                                                       # make sure <Sensor Status> is 0x0000
+                        call attributes_write(c_glucose_measurement, 0, 17, measure_buf(0:17))          # write characteristic
+                        memcpy(context_buf(0), report_buf(15), 16)                                      # copy stored measurement context
+                        call attributes_write(c_glucose_measurement_context, 0, 16, context_buf(0:16))  # write characteristic
+                        loop_index = loop_index + 1                                                     # increment while loop index
+                        report_index = report_index + 1                                                 # increment report read index
+                        if report_index > 126 then
+                            report_index = 0                                                            # wrap around to beginning of ring buffer
+                        end if
+                    end while
+                end if
+            end if
+
+            # check for "First record" operator (5)
+            if value_data(1:1) = 5 then
+                # DEVKIT DISPLAY OUTPUT: request first
+                call hardware_io_port_write(1, $7, $1)      # set the display to command mode
+                call hardware_spi_transfer(0, 1, "\xc0")    # change display cursor pos
+                call hardware_io_port_write(1, $7, $3)      # set the display to data mode
+                call hardware_spi_transfer(0, 15, "Req First OK   ")    # write request status to display
+                wait_ticks = 3
+                
+                # transmit first record available
+                if config_buf(2:1) > 0 then
+                    report_count = config_buf(2:1)
+                    head_index = config_buf(3:1)
+                    report_index = head_index - report_count                                        # index is ring buffer head index - report count
+                    if report_index < 0 then
+                        report_index = report_index + 126                                           # boundary checking and adjustment
+                    end if
+                    call flash_ps_load($8000 + report_index)(result, len1, report_buf(0:32))        # read last stored record
+                    memcpy(measure_buf(0), report_buf(0), 15)                                       # copy stored measurement
+                    measure_buf(15:2) = $0000                                                       # make sure <Sensor Status> is 0x0000
+                    call attributes_write(c_glucose_measurement, 0, 17, measure_buf(0:17))          # write characteristic
+                    memcpy(context_buf(0), report_buf(15), 16)                                      # copy stored measurement context
+                    call attributes_write(c_glucose_measurement_context, 0, 16, context_buf(0:16))  # write characteristic
+                end if
+            end if
+
+            # check for "Last record" operator (6)
+            if value_data(1:1) = 6 then
+                # DEVKIT DISPLAY OUTPUT: request last
+                call hardware_io_port_write(1, $7, $1)      # set the display to command mode
+                call hardware_spi_transfer(0, 1, "\xc0")    # change display cursor pos
+                call hardware_io_port_write(1, $7, $3)      # set the display to data mode
+                call hardware_spi_transfer(0, 15, "Req Last OK    ")    # write request status to display
+                wait_ticks = 3
+                
+                # transmit last record available
+                if config_buf(2:1) > 0 then
+                    report_count = config_buf(2:1)
+                    head_index = config_buf(3:1)
+                    report_index = head_index - 1                                                   # index is ring buffer head index - report count
+                    if report_index < 0 then
+                        report_index = report_index + 127                                           # boundary checking and adjustment
+                    end if
+                    call flash_ps_load($8000 + report_index)(result, len1, report_buf(0:32))        # read last stored record
+                    memcpy(measure_buf(0), report_buf(0), 15)                                       # copy stored measurement
+                    measure_buf(15:2) = $0000                                                       # make sure <Sensor Status> is 0x0000
+                    call attributes_write(c_glucose_measurement, 0, 17, measure_buf(0:17))          # write characteristic
+                    memcpy(context_buf(0), report_buf(15), 16)                                      # copy stored measurement context
+                    call attributes_write(c_glucose_measurement_context, 0, 16, context_buf(0:16))  # write characteristic
+                end if
+            end if
+        end if
+        
+        # NOTE: other operations not handled in this demo
+    end if
+end
+
+# catch button press for P0_0 (active HIGH configuration, hardware.xml pulls it low)
+event hardware_io_port_status(delta, port, irq, state)
+    if port = 0 then
+        if (state & 1) = 1 then
+            # P0_0 is high, so trigger glucose measurement on potentiometer on pin 6
+            # DEVKIT UART OUTPUT: P0_0 pressed
+            call system_endpoint_tx(5, 16, "\r\nP0_0 pressed\r\n")
+            call hardware_adc_read(6, 3, 0)
+        end if
+        if (state & 2) = 2 then
+            # P0_1 is high, so trigger PS key userdata reset
+            # initialize record count = 0, head index = 0
+            # DEVKIT UART OUTPUT: P0_1 pressed
+            call system_endpoint_tx(5, 16, "\r\nP0_1 pressed\r\n")
+            config_buf(0:2) = $B8B8 # unique ID 
+            config_buf(2:2) = $0000 # report count = 0, head index = 0
+            config_buf(4:2) = $0000 # sequence number = 0 (16-bit)
+            call flash_ps_save($807F, 6, config_buf(0:6))
+            seq_num = 0
+
+            # remove all 16 possible bonding entries
+            call sm_delete_bonding(0)
+            call sm_delete_bonding(1)
+            call sm_delete_bonding(2)
+            call sm_delete_bonding(3)
+            call sm_delete_bonding(4)
+            call sm_delete_bonding(5)
+            call sm_delete_bonding(6)
+            call sm_delete_bonding(7)
+            call sm_delete_bonding(8)
+            call sm_delete_bonding(9)
+            call sm_delete_bonding(10)
+            call sm_delete_bonding(11)
+            call sm_delete_bonding(12)
+            call sm_delete_bonding(13)
+            call sm_delete_bonding(14)
+            call sm_delete_bonding(15)
+
+            # DEVKIT UART OUTPUT: data reset
+            call system_endpoint_tx(5, 12, "Data reset\r\n")
+
+            # DEVKIT DISPLAY OUTPUT: data reset
+            call hardware_io_port_write(1, $7, $1)      # set the display to command mode
+            call hardware_spi_transfer(0, 1, "\xc0")    # change display cursor pos
+            call hardware_io_port_write(1, $7, $3)      # set the display to data mode
+            call hardware_spi_transfer(0, 15, "Data reset OK  ")    # write connection status to display
+            wait_ticks = 3
+        end if
+    end if
+end
+
+# catch timer tick, once per second
+event hardware_soft_timer(handle)
+    # increment tick counter
+    tick = tick + 1
+    
+    # alternate simple animation state tracker (+1/-1)
+    alternating = alternating * -1
+    
+    # DEVKIT UART OUTPUT: tick
+    call system_endpoint_tx(5, 1, ".")
+    
+    # refresh display with current connection status if "wait_ticks" is about to reach zero
+    if wait_ticks = 1
+        # DEVKIT DISPLAY OUTPUT: connected/advertising
+        call hardware_io_port_write(1, $7, $1)      # set the display to command mode
+        call hardware_spi_transfer(0, 1, "\xc0")    # change display cursor pos
+        call hardware_io_port_write(1, $7, $3)      # set the display to data mode
+        if connected = 1 then
+            call hardware_spi_transfer(0, 15, "Connected      ")    # write connection status to display
+        else
+            call hardware_spi_transfer(0, 15, "Advertising    ")    # write connection status to display
+        end if
+    end if
+    
+    # decrement countdown timer if it's active
+    if wait_ticks > 0 then
+        wait_ticks = wait_ticks - 1
+    end if
+
+    # DEVKIT DISPLAY OUTPUT: +/* spinner
+    call hardware_io_port_write(1, $7, $1)      # set the display to command mode
+    call hardware_spi_transfer(0, 1, "\xcf")    # change display cursor pos to row 2, column 16 (bottom right corner)
+    call hardware_io_port_write(1, $7, $3)      # set the display to data mode
+    if connected = 1 then
+        if alternating = 1 then
+            call hardware_spi_transfer(0, 1, "+")   # write + character to display
+        else
+            call hardware_spi_transfer(0, 1, "*")   # write * character to display
+        end if
+    else
+        if alternating = 1 then
+            call hardware_spi_transfer(0, 1, "?")   # write ? character to display
+        else
+            call hardware_spi_transfer(0, 1, " ")   # write <space> character to display
+        end if
+    end if
+
+    # check for advertising behavior changes
+    if tick = 30 then
+        # reduce advertising to slower rate (1-2.5sec) after 30 seconds
+        # (note min/max parameters are in units of 625 uSec)
+        call gap_set_adv_parameters(1600, 4000, 7)
+    end if
+    
+    if connected = 1 then
+        # read and store battery level once per timer tick while connected
+        call hardware_adc_read(15, 3, 0)
+    end if
+end
+
+# catch result of ADC read
+event hardware_adc_result(input, value)
+    if input = 15 then
+        # battery level reading received, store to GATT DB, then read potentiometer level
+        
+        # scale value to range 0-100
+        # measurement range is 32768 = 1.15v * 3 = 3.45v
+        # new battery ADC measurement is 20912 = 2.52v
+        # minimum battery voltage is 2.0 volts = 2.0v / 3.45v * 32768 = 18996
+        # 20912 - 18996 = 1916
+        battery_level = (value - 18995) * 100 / 1916
+        
+        # clip to 0-100 range
+        if battery_level > 100 then
+            battery_level = 100
+        end if
+        if battery_level < 0 then
+            battery_level = 0
+        end if
+        call attributes_write(c_battery_level, 0, 1, battery_level)
+    end if
+    if input = 6 then
+        # potentiometer value received, so we'll pretend it's
+        # a glucose measurement for the purposes of this demo
+        
+        ################################################################################
+        # build the "glucose_measurement" characteristic value as follows:
+        #
+        #   [  0]: Flags
+        #           BIT STRUCTURE:
+        #           [  0]: Time Offset Present
+        #           [  1]: Glucose Concentration, Type and Sample Location Present
+        #           [  2]: Glucose Concentration Units
+        #           [  3]: Sensor Status Annunciation Present
+        #           [  4]: Context Information Follows
+        #           [5-7]: RESERVED
+        #
+        #   [1-2]: Sequence Number (uint16)
+        #   [3-9]: Base Time (date_time, size is 7 bytes)
+        #           BYTE STRUCTURE:
+        #           [0-1]: Year (0 = unknown, 2-byte value)
+        #           [  2]: Month (1-12 or 0 = unknown)
+        #           [  3]: Day (1-31 or 0 = unknown)
+        #           [  4]: Hour (0-23)
+        #           [  5]: Minute (0-59)
+        #           [  6]: Second (0-59)
+        #
+        #   --> If bit 0 of <Flags> set:
+        #       [ +2]: Time Offset (sint16, minutes of offset from Base Time, little-endian byte order)
+        #
+        #   --> If bit 1 of <Flags> set AND bit 2 of <Flags> clear:
+        #       [ +2]: Glucose Concentration - units of kg/L (SFLOAT, little-endian byte order)
+        #
+        #   --> If bit 1 of <Flags> set AND bit 2 of <Flags> set:
+        #       [ +2]: Glucose Concentration - units of mol/L (SFLOAT, little-endian byte order)
+        #
+        #   --> If bit 1 of <Flags> set:
+        #       [+.5]: Type (nibble, 4 bits)
+        #           VALUE LIST:
+        #               0 = RESERVED
+        #               1 = Capillary Whole blood
+        #               2 = Capillary Plasma
+        #               3 = Venous Whole blood
+        #               4 = Venous Plasma
+        #               5 = Arterial Whole blood
+        #               6 = Arterial Plasma
+        #               7 = Undetermined Whole blood
+        #               8 = Undetermined Plasma
+        #               9 = Interstitial Fluid (ISF)
+        #              10 = Control Solution
+        #           11-15 = RESERVED
+        #
+        #       [+.5]: Sample Location (nibble, 4 bits)
+        #           VALUE LIST:
+        #               0 = RESERVED
+        #               1 = Finger
+        #               2 = Alternate Site Test (AST)
+        #               3 = Earlobe
+        #               4 = Control solution
+        #            5-14 = RESERVED
+        #              15 = Sample Location value not available
+        #
+        #       *** NOTE: <Type> and <Sample Location> are sent together, in little-endian nibble order
+        #
+        #   --> If bit 3 of <Flags> set:
+        #       [ +2]: Sensor Status Annunciation (status, same size as uint16, little-endian byte order)
+        #           BIT STRUCTURE:
+        #             [ 0] = Device battery low at time of measurement
+        #             [ 1] = Sensor malfunction or faulting at time of measurement
+        #             [ 2] = Sample size for blood or control solution insufficient at time of measurement
+        #             [ 3] = Strip insertion error
+        #             [ 4] = Strip type incorrect for device
+        #             [ 5] = Sensor result higher than the device can process
+        #             [ 6] = Sensor result lower than the device can process
+        #             [ 7] = Sensor temperature too high for valid test/result at time of measurement
+        #             [ 8] = Sensor temperature too low for valid test/result at time of measurement
+        #             [ 9] = Sensor read interrupted because strip was pulled too soon at time of measurement
+        #             [10] = General device fault has occurred in the sensor
+        #             [11] = Time fault has occurred in the sensor and time may be inaccurate
+        #          [12-15] = RESERVED
+        
+        # set <Flags> value to 00011011 in binary
+        # note that bits 0, 1, 3, and 4 are set, enabling the following:
+        #   - Time Offset
+        #   - Glucose Concentration - units of kg/L (2 bytes)
+        #   - Type (nibble, 4 bits)
+        #   - Sample Location (nibble, 4 bits)
+        #   - Sensor Status (2 bytes)
+        #   - Context Information Follows (see code to fill second characteristic below)
+        measure_buf(0:1) = $1B
+        
+        # set <Sequence Number> (incremented later, after the context report is built)
+        # (NOTE: little-endian with respect to byte order)
+        measure_buf(1:1) = seq_num          # 16-bit LSB
+        measure_buf(2:1) = seq_num / 256    # 16-bit MSB
+        
+        # set <Base Time> to example value of 2009-07-24 16:30:00
+        measure_buf(3:2) = $07D9    # 0x07D9 = 2009
+        measure_buf(5:1) = $07      # 0x07 = July
+        measure_buf(6:1) = $18      # 0x18 = 24
+        measure_buf(7:1) = $10      # 0x10 = 16
+        measure_buf(8:1) = $1E      # 0x1E = 30
+        measure_buf(9:1) = $00      # 0x00 = 0, of course.
+        
+        # set <Time Offset> to seq_num, to imitate passage of time
+        # (NOTE: little-endian with respect to byte order)
+        measure_buf(10:1) = seq_num         # 16-bit LSB
+        measure_buf(11:1) = seq_num / 256   # 16-bit MSB
+        
+        # set <Glucose Concentration (kg/L)> using potentiometer reading
+        # (NOTE: little-endian with respect to byte order, uses SFLOAT conversion)
+        #
+        # The value read from ADC pin will be 0-65535, but the largest mantissa that
+        # will fit in an SFLOAT is 12 bits, which is 0-4095, so we have to scale it.
+        # Typical values for glucose concentration are between about 4.0 mmol/L (low
+        # end) and 10.0 mmol/L (very high end). In units of mg/dL, these values are
+        # 72 mg/dL (low) and 180 mg/dL (very high). See the following pages for more
+        # information:
+        #
+        #   http://www.diabetes.co.uk/diabetes_care/blood-sugar-level-ranges.html
+        #   http://www.livestrong.com/article/222057-what-is-a-normal-hba1c
+        #   http://en.mte.cz/conversion.php
+        #
+        # for an online conversion example. The conversions between mmol/L and mg/dL
+        # are as follows:
+        #
+        #       GRAMS -> MOLES
+        #   <mg/dL> = 18 * <mmol/L>
+        #
+        #       MOLES -> GRAMS
+        #   <mmol/L> = <mg/dL> / 18
+        #
+        # Since our options for reporting data in the official BGM spec are either
+        # mol/L or kg/L, and NOT either of the commonly referenced formats, we have to
+        # make sure our units are correct. Converting within each system of either
+        # grams or moles is done as follows:
+        #
+        #       GRAMS
+        #   <kg/L> = <mg/dL> / 100000       ...or...
+        #   <kg/L> = <mg/dL> * 10^-5
+        #
+        #   <mg/dL> = <kg/L> * 100000       ...or...
+        #   <mg/dL> = <kg/L> * 10^5
+        #
+        #       MOLES
+        #   <mol/L> = <mmol/L> / 1000       ...or...
+        #   <mol/L> = <mmol/L> * 10^-3
+        #
+        #   <mmol/L> = <mol/L> * 1000       ...or...
+        #   <mmol/L> = <mol/L> * 10^3
+        #
+        # Therefore, we need to convert a value from the range of 0-65535 into the
+        # range of 72-180 (mg/dL), then multiply it by 10^-5 (for kg/L). The sfloat()
+        # conversion takes two parameters, "mantissa" and "exponent", which are used
+        # in the following way:
+        #
+        #   sfloat(mantissa, exponent) = <mantissa> * 10^<exponent>
+        #
+        # So we will use our scaled 72-180 value for <mantissa>, and -5 for <exponent>.
+        # Since integer division loses all decimal values, instead of dividing by 304
+        # and using -5 for the exponent in sfloat(), instead we divide by 30 and use -6
+        # for the exponent, so we retain one decimal place  of precision. This is really
+        # just a simulated value anyway, so it doesn't matter a whole lot in the end.
+        # Note that the "sfloat()" mantissa may only be 12 bits, or 4096 max. 65536/30
+        # is only ~2185, so we are safe here.
+        #
+        # Our range size is (180 - 72) = 108, scale factor (65535 / 108) ~= 304, and
+        # offset is +72. Or, in shifted-one-decimal-place terms...
+        #
+        # Our range size is (180 - 720) = 1080, scale factor (65535 / 1080) ~= 30, and
+        # offset is 720:
+        tmp_float = (value / 30) + 720
+        measure_buf(12:2) = sfloat(tmp_float, -6)
+        
+        # set <Type> and <Sample Location> together, since they are the same byte
+        #   - Type = 0x1, 0b0001 - Capillary Whole Blood
+        #   - Sample Location = 0x1, 0b0001 - Finger
+        # (NOTE: little-endian with respect to nibble order)
+        measure_buf(14:1) = $11
+        
+        # set <Sensor Status> using "no errors" value of zero
+        measure_buf(15:2) = $0000
+
+        # write glucose measurement characteristic value
+        call attributes_write(c_glucose_measurement, 0, 17, measure_buf(0:17))
+        
+        # sample hex value of complete c_glucose_measurement data:
+        # 1b 02 00 d9 07 07 18 10 1e 00 02 00 14 a7 11 00 00
+        
+        # DEVKIT UART OUTPUT: glucose measurement set
+        call system_endpoint_tx(5, 25, "Glucose measurement set\r\n")
+
+        # copy glucose measurement to report buffer
+        # (NOTE: only first 15 bytes are stored, not the status byte, so that 15
+        # bytes of the measurement and all 17 of the context will fit in a single
+        # 32-byte PS key for simple record storage)
+        memcpy(report_buf(0), measure_buf(0), 15)
+
+        ################################################################################
+        # build the "glucose_measurement_context" characteristic value as follows:
+        #
+        #   [  0]: Flags
+        #           BIT STRUCTURE:
+        #           [  0]: Carbohydrate ID And Carbohydrate Present	
+        #           [  1]: Meal Present
+        #           [  2]: Tester-Health Present
+        #           [  3]: Exercise Duration And Exercise Intensity Present
+        #           [  4]: Medication ID And Medication Present
+        #           [  5]: Medication Value Units
+        #           [  6]: HbA1c Present
+        #           [  7]: Extended Flags Present
+        #
+        #   [1-2]: Sequence Number (uint16)
+        #
+        #   --> If bit 7 of <Flags> set:
+        #       [ +1]: Extended Flags
+        #           BIT STRUCTURE:
+        #           [0-7]: RESERVED
+        #
+        #   --> If bit 0 of <Flags> set:
+        #       [ +1]: Carbohydrate ID (uint8)
+        #           VALUE LIST:
+        #               0 = RESERVED
+        #               1 = Breakfast
+        #               2 = Lunch
+        #               3 = Dinner
+        #               4 = Snack
+        #               5 = Drink
+        #               6 = Supper
+        #               7 = Brunch
+        #           8-255 = RESERVED
+        #
+        #       [ +2]: Carbohydrate - units of kilograms (SFLOAT, little-endian byte order)
+        #
+        #   --> If bit 1 of <Flags> set:
+        #       [ +1]: Meal (uint8)
+        #           VALUE LIST:
+        #               0 = RESERVED
+        #               1 = Preprandial (before meal)
+        #               2 = Postprandial (after meal)
+        #               3 = Fasting
+        #               4 = Casual (snacks, drinks, etc.)
+        #               5 = Bedtime
+        #           6-255 = RESERVED
+        #
+        #   --> If bit 2 of <Flags> set:
+        #       [+.5]: Tester (nibble, 4 bits)
+        #           VALUE LIST:
+        #               0 = RESERVED
+        #               1 = Self
+        #               2 = Health Care Professional
+        #               3 = Lab Test
+        #            4-14 = RESERVED
+        #              15 = Tester value not available
+        #
+        #       [+.5]: Health (nibble, 4 bits)
+        #           VALUE LIST:
+        #               0 = RESERVED
+        #               1 = Minor health issues
+        #               2 = Major health issues
+        #               3 = During menses
+        #               4 = Under stress
+        #               5 = No health issues
+        #            6-14 = RESERVED
+        #              15 = Health value not available
+        #
+        #       *** NOTE: <Tester> and <Health> are sent together, in little-endian nibble order
+        #
+        #   --> If bit 3 of <Flags> set:
+        #       [ +2]: Exercise Duration (uint16, seconds of exercise, little-endian byte order)
+        #       *** NOTE: 0-65534 seconds normal, 65535 = Overrun indication
+        #
+        #       [ +1]: Exercise Intensity (uint8, percentage value: 0-100)
+        #
+        #   --> If bit 4 of <Flags> set:
+        #       [ +1]: Medication ID (uint8)
+        #           VALUE LIST:
+        #               0 = RESERVED
+        #               1 = Rapid acting insulin
+        #               2 = Short acting insulin
+        #               3 = Intermediate acting insulin
+        #               4 = Long acting insulin
+        #               5 = Pre-mixed insulin
+        #           6-255 = RESERVED
+        #
+        #   --> If bit 4 of <Flags> set AND bit 5 of <Flags> clear:
+        #       [ +2]: Medication - units of kilograms (SFLOAT, little-endian byte order)
+        #
+        #   --> If bit 4 of <Flags> set AND bit 5 of <Flags> set:
+        #       [ +2]: Medication - units of liters (SFLOAT, little-endian byte order)
+        #
+        #   --> If bit 6 of <Flags> set:
+        #       [ +2]: HbA1c - precise percentage (SFLOAT, little-endian byte order)
+
+        # set <Flags> value to 01011111 in binary
+        # note that bits 0, 1, 2, 3, 4, and 6 are set, enabling the following:
+        #   - Carbohydrate ID (1 byte)
+        #   - Carbohydrate - units of kilograms (2 bytes)
+        #   - Meal (1 byte)
+        #   - Tester (nibble, 4 bits)
+        #   - Health (nibble, 4 bits)
+        #   - Exercise Duration (2 bytes)
+        #   - Exercise Intensity (1 byte)
+        #   - Medication ID (1 byte)
+        #   - Medication - units of kilograms (2 bytes)
+        #   - HbA1c - precise percentage (2 bytes)
+        #
+        # extended flags are not enabled because they currently have no usable values
+        context_buf(0:1) = $5F
+        
+        # set <Sequence Number> (matches glucose_measurement Sequence Number)
+        # (NOTE: little-endian with respect to byte order)
+        context_buf(1:1) = seq_num          # 16-bit LSB
+        context_buf(2:1) = seq_num / 256    # 16-bit MSB
+        
+        # *** NOTE: <Extended Flags> byte would be here if enabled
+        
+        # set <Carbohydrate ID> to Dinner (0x03)
+        context_buf(3:1) = $03
+        
+        # set <Carbohydrate (kg)> to SFLOAT value of 2.75
+        # (NOTE: little-endian with respect to byte order, uses SFLOAT conversion)
+        context_buf(4:2) = sfloat(275, -2)
+        
+        # set <Meal> to 0x02 - Postprandial
+        context_buf(6:1) = $02
+        
+        # set <Tester> and <Health> together, since they are the same byte
+        #   - Tester = 0x2, 0b0010 - Health Care Professional
+        #   - Health = 0x4, 0b0100 - Under Stress
+        # (NOTE: little-endian with respect to nibble order)
+        context_buf(7:1) = $24
+        
+        # set <Exercise Duration> to 30 minutes
+        # (NOTE: little-endian with respect to byte order)
+        context_buf(8:2) = $1E00            # 0x1E = 30
+        
+        # set <Exercise Intensity> to 100%
+        context_buf(10:1) = $64             # 0x64 = 100
+        
+        # set <Medication ID> to Short acting insulin
+        context_buf(11:1) = $02
+        
+        # set <Medication (kg)> to SFLOAT value of 0.05
+        context_buf(12:2) = sfloat(5, -2)
+        
+        # set <HbA1c (%)> to SFLOAT value
+        # Healthy adult levels of glycated hemoglobin are 6.0% or lower.
+        # We pretend here that we are a healthy adult with an HbA1c level
+        # of 5.41%
+        context_buf(14:2) = sfloat(541, -2)
+            
+        # write glucose measurement context characteristic value
+        call attributes_write(c_glucose_measurement_context, 0, 16, context_buf(0:16))
+        
+        # sample hex value of complete c_glucose_measurement_context data:
+        # 5f 02 00 03 13 e1 02 24 00 1e 64 02 05 e0 1d e2
+        # (may have trailing 00 to fill 17-byte attribute size)
+        
+        # DEVKIT UART OUTPUT: glucose context set
+        call system_endpoint_tx(5, 21, "Glucose context set\r\n")
+
+        # copy glucose measurement context to report buffer
+        memcpy(report_buf(15), context_buf(0), 16)
+
+        # finally increment sequence number
+        seq_num = seq_num + 1
+        
+        # write current report to appopriate PS key for permanent storage
+        call flash_ps_save($8000 + config_buf(3:1), 32, report_buf(0:32))
+        
+        # DEVKIT UART OUTPUT: stored record
+        call system_endpoint_tx(5, 25, "Record stored to PS key\r\n")
+
+        # update config buffer report count (0 - 126)
+        if config_buf(2:1) < $7E then
+            # increment report count storage
+            config_buf(2:1) = config_buf(2:1) + 1
+        end if
+        
+        # update config buffer head index (0 - 126 with loop back to 0)
+        if config_buf(3:1) < $7E then
+            # increment ring buffer head index
+            config_buf(3:1) = config_buf(3:1) + 1
+        else
+            # ring buffer head at end of memory space, so wrap to beginning
+            config_buf(3:1) = 0
+        end if
+        
+        # update config buffer sequence number
+        config_buf(4:1) = seq_num
+        config_buf(5:1) = seq_num / 256
+        
+        # write config buffer to PS key
+        call flash_ps_save($807F, 6, config_buf(0:6))
+
+        # DEVKIT UART OUTPUT: config updated
+        call system_endpoint_tx(5, 23, "Config PS key updated\r\n")
+
+        # DEVKIT DISPLAY OUTPUT: measurement
+        call hardware_io_port_write(1, $7, $1)      # set the display to command mode
+        call hardware_spi_transfer(0, 1, "\xc0")    # change display cursor pos
+        call hardware_io_port_write(1, $7, $3)      # set the display to data mode
+        call hardware_spi_transfer(0, 15, "Measurement OK ")    # write connection status to display
+        wait_ticks = 3
+    end if
+end

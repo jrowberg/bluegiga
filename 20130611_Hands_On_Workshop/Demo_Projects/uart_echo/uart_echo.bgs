@@ -1,0 +1,42 @@
+# ================================================================
+# BGScript demo: Simple UART local echo with RX watermarking
+# Jeff Rowberg <jeff.rowberg@bluegiga.com>
+# ----------------------------------------------------------------
+#
+# CHANGELOG:
+#   2013-05-24 - Initial release
+#
+# ================================================================
+
+# NOTE: this project does NOT advertise or deal with any BLE connectivity.
+#       Its sole purpose is to demonstrate basic UART RX watermarking.
+
+dim in(20)          # endpoint data in buffer
+dim in_len          # endpoint data in buffer size
+dim result          # endpoint RX error code
+
+event system_boot(major, minor, patch, build, ll_version, protocol, hw)
+    # enable RX watermark on UART1 (no TX watermark)
+    call system_endpoint_set_watermarks(system_endpoint_uart1, 1, 0)
+
+    # DEBUG OUTPUT: ready
+    call system_endpoint_tx(system_endpoint_uart1, 9, "\r\nREADY\r\n")
+end
+
+event system_endpoint_watermark_rx(endpoint, size)
+    if endpoint = system_endpoint_uart1 then
+        in_len = size
+        
+        # disable RX watermark on UART1
+        call system_endpoint_set_watermarks(system_endpoint_uart1, 0, $ff)
+        
+        # read available data from UART1
+        call system_endpoint_rx(system_endpoint_uart1, in_len)(result, in_len, in(0:in_len))
+        
+        # write data back out the UART1
+        call system_endpoint_tx(system_endpoint_uart1, in_len, in(0:in_len))
+
+        # set RX watermark on UART1
+        call system_endpoint_set_watermarks(system_endpoint_uart1, 1, $ff)
+    end if
+end

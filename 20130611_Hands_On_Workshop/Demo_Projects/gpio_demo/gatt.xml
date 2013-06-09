@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<configuration>
+
+    <!-- 1800: org.bluetooth.service.generic_access -->
+    <service uuid="1800" id="generic_access">
+        <description>Generic Access</description>
+
+        <!-- 2A00: org.bluetooth.characteristic.gap.device_name -->
+        <characteristic uuid="2A00" id="c_device_name">
+            <description>Device Name</description>
+            <properties read="true" const="true" />
+            <value>BGT GPIO Test</value>
+        </characteristic>
+
+        <!-- 2A01: org.bluetooth.characteristic.gap.appearance -->
+        <characteristic uuid="2A01" id="c_appearance">
+            <description>Appearance</description>
+            <properties read="true" const="true" />
+            <value type="hex">0100</value>
+        </characteristic>
+        
+    </service>
+
+    <!-- 180A: org.bluetooth.service.device_information -->
+    <service uuid="180A" id="device_information">
+        <description>Device Information</description>
+    
+        <!-- 2A29: org.bluetooth.characteristic.manufacturer_name_string -->
+        <characteristic uuid="2A29" id="c_manufacturer_name">
+            <description>Manufacturer Name</description>
+            <properties read="true" const="true" />
+            <value>Bluegiga</value>
+        </characteristic>
+
+        <!-- 2A24: org.bluetooth.characteristic.model_number_string -->
+        <characteristic uuid="2A24" id="c_model_number">
+            <description>Model Number</description>
+            <properties read="true" const="true" />
+            <value>BGT-DEMO-GPIO</value>
+        </characteristic>
+        
+    </service>
+    
+    <!-- custom gpio status service -->
+    <service uuid="ddea706a-9d53-4bbb-ac0b-74ba819e7d9c">
+        <description>GPIO Status Service</description>
+        
+        <!-- custom gpio status characteristic -->
+        <characteristic uuid="f1c7c102-27bc-4074-aee6-35c58a3b31f6" id="c_gpio_status">
+            <description>GPIO Status</description>
+            <properties read="true" indicate="true" notify="true" />
+            <value length="3" type="hex" />
+            <!--
+                This will contain a 3-byte value that contains the logic status of Port 0,
+                Port 1, and Port 2 (in that order). The included BGScript application will
+                update the value of all three bytes whenever P0_0, P0_1, or P1_6 is pressed.
+                The status of P2_0 will be reported at that time also, but Port 2 interrupts
+                are not supported, so pressing P2_0 by itself will not trigger an update.
+            -->
+        </characteristic>
+
+    </service>
+
+</configuration>

@@ -1,0 +1,100 @@
+# ================================================================
+# BGScript demo project: custom advertisement data
+# Jeff Rowberg <jeff.rowberg@bluegiga.com>
+# ----------------------------------------------------------------
+#
+# CHANGELOG:
+#   2012-12-14 - Initial release
+#
+# ================================================================
+
+dim adv_data(13)    # custom advertisement data
+dim sr_data(20)     # custom scan response data (friendly name for active scanning)
+dim mac_addr(6)     # Bluetooth MAC address container
+
+event system_boot(major, minor, patch, build, ll_version, protocol, hw)
+    # -------------------------------
+    # build custom advertisement data
+    # -------------------------------
+    
+    # flags for discoverable/connectable
+    adv_data(0:1) = $02 # ad field length = 2 bytes
+    adv_data(1:1) = gap_ad_type_flags   # ad field type = 0x01 (Flags)
+    adv_data(2:1) = $06 # flags = 0x06, connectable/undirected
+
+    # tx power field advertisement, iOS apps may need this
+    adv_data(3:1) = $02 # ad field length = 2 bytes
+    adv_data(4:1) = gap_ad_type_txpower    # ad field type = 0x0A (TX Power)
+    adv_data(5:1) = $03 # TX power in dBm
+    # NOTE: TX power is a signed 8-bit value, and is not changed automatically
+    # when using "hardware_set_txpower(<power>)". This may be anywhere from -23
+    # to +3 based on your settings. Negative values may be converted to two's
+    # complement form by adding 256, so for example -23 dBm would be 233 or $E9.
+    
+    # custom manufacturer
+    adv_data(6:1) = $06 # ad field length = 5 bytes (arbitrary, maybe more or less but minimum 3)
+    adv_data(7:1) = $ff # ad field type = 0xFF (Manufacturer Specific Data)
+    adv_data(8:1) = $ff # unknown/prototype Company Identifier Code - octet 2 
+    adv_data(9:1) = $ff # unknown/prototype Company Identifier Code - octet 1 
+    adv_data(10:1) = $b1 # custom data byte #1 (can be anything)
+    adv_data(11:1) = $b2 # custom data byte #2 (can be anything)
+    adv_data(12:1) = $b3 # custom data byte #3 (can be anything)
+    # NOTE: manufacturer data fields should contain the Company Identifier Code
+    # in order to stay within BT 4.0 spec. You should also ideally obtain an
+    # an official Company Identifier Code, but 0xFFFF is suitable for development.
+    # (this is why the minimum ad field length for this is 3, so the CIC fits)
+
+    # More bytes are possible here, but not necessary for this demo.
+    # Compare with automatically generated ad packets from other
+    # demo projects to see what else you might put here, or read
+    # the relevant portions of the Bluetooth 4.0 Core Spec document
+    # for greater detail.
+    
+    # -------------------------------
+    # build custom scan response data
+    # -------------------------------
+
+    # get Bluetooth MAC address of this device (NOTE: this is little-endian!)
+    call system_address_get()(mac_addr(0:6))
+
+    sr_data(0:1) = $13  # ad field length = 19 bytes (0x13)
+    sr_data(1:1) = gap_ad_type_localname_complete   # ad field type = 0x09 (Complete local name)
+    sr_data(2:1) = $4d  # 'M'
+    sr_data(3:1) = $79  # 'y'
+    sr_data(4:1) = $20  # ' '
+    sr_data(5:1) = $57  # 'W'
+    sr_data(6:1) = $69  # 'i'
+    sr_data(7:1) = $64  # 'd'
+    sr_data(8:1) = $67  # 'g'
+    sr_data(9:1) = $65  # 'e'
+    sr_data(10:1) = $74 # 't'
+    sr_data(11:1) = $20 # ' '
+    sr_data(12:1) = (mac_addr(2:1)/$10) + 48 + ((mac_addr(2:1)/$10)/10*7) # MAC byte 4 10's digit
+    sr_data(13:1) = (mac_addr(2:1)&$f)  + 48 + ((mac_addr(2:1)&$f )/10*7) # MAC byte 4 1's digit
+    sr_data(14:1) = $3a # ':'
+    sr_data(15:1) = (mac_addr(1:1)/$10) + 48 + ((mac_addr(1:1)/$10)/10*7) # MAC byte 5 10's digit
+    sr_data(16:1) = (mac_addr(1:1)&$f)  + 48 + ((mac_addr(1:1)&$f )/10*7) # MAC byte 5 1's digit
+    sr_data(17:1) = $3a # ':'
+    sr_data(18:1) = (mac_addr(0:1)/$10) + 48 + ((mac_addr(0:1)/$10)/10*7) # MAC byte 6 10's digit
+    sr_data(19:1) = (mac_addr(0:1)&$f)  + 48 + ((mac_addr(0:1)&$f )/10*7) # MAC byte 6 1's digit
+
+    # set advertisement interval to 1s-2s, use all advertisement channels
+    # (note min/max parameters are in units of 625 uSec)
+    call gap_set_adv_parameters(1600, 3200, 7)
+    
+    # set custom advertisement data
+    call gap_set_adv_data(0, 13, adv_data(0:13))
+    
+    # set custom scan response data (i.e. the Device Name value)
+    call gap_set_adv_data(1, 20, sr_data(0:20))
+
+    # put module into discoverable/connectable mode (with user-defined advertisement data)
+    call gap_set_mode(gap_user_data, gap_undirected_connectable)
+end
+
+event connection_disconnected(handle, result)
+    # disconnected!
+    
+    # return to discoverable/connectable mode (with user-defined advertisement data)
+    call gap_set_mode(gap_user_data, gap_undirected_connectable)
+end

@@ -1,0 +1,31 @@
+# ================================================================
+# BGScript demo: fast (1 KHz) 4-channel PWM output demo
+# Jeff Rowberg <jeff.rowberg@bluegiga.com>
+# ----------------------------------------------------------------
+#
+# CHANGELOG:
+#   2013-04-03 - Initial release
+#
+# See Section 9 of the CC254x User Guide for precise detail on all
+# timer-related functionality.
+#
+# ================================================================
+
+event system_boot(major, minor, patch, build, ll_version, protocol_version, hw)
+    # NOTE: <timer_ticks> speed = 0 (default), which means it runs at 32,000,000 Hz
+    
+    # channel 0 establishes the baseline frequency (32,000,000 Hz / 32000 = 1,000 Hz)
+    call hardware_timer_comparator(1, 0, 6, 32000)
+    
+    # channel 1 is 50% duty cycle (16000 / 32000 = 0.5)
+    call hardware_timer_comparator(1, 1, 6, 16000)
+    
+    # channel 2 is 25% duty cycle (8000 / 32000 = 0.25)
+    call hardware_timer_comparator(1, 2, 6, 8000)
+    
+    # channel 3 is 12.5% duty cycle (8000 / 32000 = 0.125)
+    call hardware_timer_comparator(1, 3, 6, 4000)
+    
+    # channel 4 is 6.25% duty cycle (8000 / 32000 = 0.0625)
+    call hardware_timer_comparator(1, 4, 6, 2000)
+end

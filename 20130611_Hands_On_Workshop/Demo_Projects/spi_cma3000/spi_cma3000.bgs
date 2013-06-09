@@ -1,0 +1,88 @@
+# ================================================================
+# BGScript demo: SPI accelerometer readings (assumed DKBLE112)
+# Jeff Rowberg <jeff.rowberg@bluegiga.com>
+# ----------------------------------------------------------------
+#
+# CHANGELOG:
+#   2012-02-04 - Fixed SPI read return value uint8array notation
+#   2013-01-17 - Updated release
+#
+# ================================================================
+
+# SPI EXPLANATION FROM MURATA APPLICATION NOTE:
+# http://www.muratamems.fi/sites/default/files/documents/tn73_c-code_example_for_cma3000_rev_0.2.pdf
+#
+# This example writes a specified register of the CMA3000.
+# The register address and data to be written are given as parameters.
+# NOTE: The command byte of SPI bus is :
+#       (MSB) A A A A A A A RW 0 (LSB)
+#             |           |  | *- always zero
+#             |           |  *--- Read / Write Bit
+#             \-----------*------ Register address
+#
+# so the real byte sent to SPI bus must be calculated:
+# BYTE = (Address * 4) + RW*2;    
+# For Read operation RW = 0 and for Write operation RW = 1
+# 'Address *4' shifts the bit pattern to left by 2 and 'RW*2' by 1.
+# For example register = 0x02 in write mode
+#  BYTE = 0x02*4 + 1*2;
+#  BYTE = 0x0A;
+#
+# In short:
+# - 0x0A = 0x02 in WRITE mode   (used for writing CTRL register)
+# - 0x18 = 0x06 in READ mode    (used for reading DOUTX register)
+# - 0x1C = 0x07 in READ mode    (used for reading DOUTY register)
+# - 0x20 = 0x08 in READ mode    (used for reading DOUTZ register)
+
+# for details on the Murata CMA3000 accelerometer, see this page:
+# http://www.muratamems.fi/sites/default/files/documents/cma3000-d0x_product_family_specification_8281000a.05.pdf
+
+dim result          # returned "result" value from hardware_spi_transfer
+dim channel         # returned "channel" value from hardware_spi_transfer
+dim data_len        # returned "data_len" value from hardware_spi_transfer
+dim measurements(3) # stores measurement readings (8-bit values for X, Y, Z)
+
+event system_boot(major, minor, patch, build, ll_version, protocol_version, hw)
+    # begin advertising at boot
+    call gap_set_mode(gap_general_discoverable, gap_undirected_connectable)
+    
+    # configure SPI SS pin to control onboard accel pin (P1_2)
+    call hardware_io_port_write(1, $7, $3)
+    call hardware_io_port_config_direction(1, $7)    
+    
+    # configure accelerometer (CTRL = 0x82 = 0b10000010 = 2g range, 100Hz ODR measurement mode)
+    call hardware_io_port_write(1, $7, $7)
+    call hardware_spi_transfer(0, 2, "\x0A\x84") # CTRL register 0x02 in WRITE mode, plus 0x84 data byte
+    call hardware_io_port_write(1, $7, $3)
+    
+    # start timer at 1 second interval, repeating
+    call hardware_set_soft_timer(32768, 0, 0)
+end
+
+event hardware_soft_timer(handle)
+    call hardware_io_port_write(1, $7, $7)
+    call hardware_spi_transfer(0, 1, "\x18") # DOUTX register 0x06 in READ mode = 0x18
+    call hardware_spi_transfer(0, 1, "\x00")(result, channel, data_len, measurements(0:1))
+    call hardware_io_port_write(1, $7, $3)
+
+    call hardware_io_port_write(1, $7, $7)
+    call hardware_spi_transfer(0, 1, "\x1C") # DOUTY register 0x07 in READ mode = 0x1C
+    call hardware_spi_transfer(0, 1, "\x00")(result, channel, data_len, measurements(1:1))
+    call hardware_io_port_write(1, $7, $3)
+
+    call hardware_io_port_write(1, $7, $7)
+    call hardware_spi_transfer(0, 1, "\x20") # DOUTZ register 0x08 in READ mode = 0x20
+    call hardware_spi_transfer(0, 1, "\x00")(result, channel, data_len, measurements(2:1))
+    call hardware_io_port_write(1, $7, $3)
+    
+    # write 3 bytes of accel data (X/Y/Z) to GATT characteristic
+    call attributes_write(c_accel_data, 0, 3, measurements(0:3))
+
+    # output 3 bytes of accel data (X/Y/Z) to UART1
+    call system_endpoint_tx(system_endpoint_uart1, 3, measurements(0:3))
+end
+
+event connection_disconnected(handle,result)
+    # connection disconnected, resume advertising
+    call gap_set_mode(gap_general_discoverable, gap_undirected_connectable)
+end

@@ -1,0 +1,34 @@
+# ================================================================
+# BGScript demo: very slow (1 Hz) PWM output demo
+# Jeff Rowberg <jeff.rowberg@bluegiga.com>
+# ----------------------------------------------------------------
+#
+# CHANGELOG:
+#   2013-04-03 - Initial release
+#
+# See Section 9 of the CC254x User Guide for precise detail on all
+# timer-related functionality.
+#
+# ================================================================
+
+event system_boot(major, minor, patch, build, ll_version, protocol_version, hw)
+    # NOTE: <timer_ticks> speed = 2, which means it runs at 8,000,000 Hz
+    # Also, <timer> divisor = 3 (clock / 128), which means it actually runs
+    # at 62,500 Hz. We can use this directly for the 16-bit comparator value,
+    # giving us a baseline frequency of 1 Hz.
+
+    # channel 0 establishes the baseline frequency (62,500 Hz / 62500 = 1 Hz)
+    call hardware_timer_comparator(1, 0, 6, 62500)
+    
+    # channel 1 is 50% duty cycle (31250 / 62500 = 0.5)
+    call hardware_timer_comparator(1, 1, 6, 31250)
+    
+    # channel 2 is 25% duty cycle (15625 / 62500 = 0.25)
+    call hardware_timer_comparator(1, 2, 6, 15625)
+    
+    # channel 3 is 12.5% duty cycle (7813 / 62500 ~= 0.125)
+    call hardware_timer_comparator(1, 3, 6, 7813)
+    
+    # channel 4 is 6.25% duty cycle (3906 / 62500 ~= 0.0625)
+    call hardware_timer_comparator(1, 4, 6, 3906)
+end

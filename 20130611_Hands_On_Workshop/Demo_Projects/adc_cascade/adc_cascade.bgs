@@ -1,0 +1,43 @@
+# ================================================================
+# BGScript demo: ADC cascaded read example, maximum possible speed
+# Jeff Rowberg <jeff.rowberg@bluegiga.com>
+# ----------------------------------------------------------------
+#
+# CHANGELOG:
+#   2013-02-14 - Initial release
+#
+# ================================================================
+
+dim all_adc_buf(16) # buffer for 2-byte 8-channel ADC read data
+
+event system_boot(major, minor, patch, build, ll_version, protocol_version, hw)
+    # begin advertising at boot
+    call gap_set_mode(gap_general_discoverable, gap_undirected_connectable)
+    
+    # trigger first ADC read, full 12-bit decimation, AVDD reference
+    call hardware_adc_read(0, 3, 2)
+end
+
+event connection_disconnected(handle, result)
+    # connection disconnected, resume advertising
+    call gap_set_mode(gap_general_discoverable, gap_undirected_connectable)
+end
+
+event hardware_adc_result(input, value)
+    if input < 7 then
+        # store value (will be AIN0-AIN6)
+        all_adc_buf(input*2:2) = value
+        
+        # trigger next ADC read
+        call hardware_adc_read(input + 1, 3, 2)
+    else
+        # store AIN7 value
+        all_adc_buf(14:2) = value
+        
+        # write 16 bytes of ADC data (8 channels, 2 bytes each) to GATT characteristic
+        call attributes_write(c_adc_data, 0, 16, all_adc_buf(0:16))
+
+        # trigger ADC 0 read to restart cascading cycle
+        call hardware_adc_read(0, 3, 2)
+    end if
+end
