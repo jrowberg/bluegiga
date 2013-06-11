@@ -159,7 +159,7 @@ event attributes_user_read_request(connection, handle, offset, maxsize)
         call hardware_io_port_read(2, $07)(ipr_result, ipr_port, ipr_data)
         io_buf(2:1) = ipr_data
         
-        # send back buffer value
+        # send back buffer value (use "0" for the status to indicate no error)
         call attributes_user_read_response(connection, 0, 3, io_buf(0:3))
     end if
 end
