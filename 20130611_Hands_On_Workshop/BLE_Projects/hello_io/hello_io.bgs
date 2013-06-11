@@ -1,0 +1,165 @@
+# ================================================================
+# BGScript demo: Hello IO lab exercise source
+# Jeff Rowberg <jeff.rowberg@bluegiga.com>
+# ----------------------------------------------------------------
+#
+# CHANGELOG:
+#   2013-06-09 - Initial release
+#
+# ================================================================
+
+dim io_buf(3)           # buffer for IO status reads (19 bits of data = 3 bytes)
+dim greeting_buf(20)    # buffer for greeting message (20 bytes max)
+dim user_name_buf(12)   # buffer for user name attribute value
+dim user_name_len       # length of name written to c_user_name attribute
+dim advertising         # advertisement status
+dim connected           # connection status
+dim encrypted           # encryption status
+dim gpio_delta          # de-bounce comparison variable
+dim ipr_result          # container for io_port_read() call's returned "result" value
+dim ipr_port            # container for io_port_read() call's returned "port" value
+dim ipr_data            # container for io_port_read() call's returned "data" value
+
+# catch system boot
+event system_boot(major, minor, patch, build, ll_version, protocol_version, hw)
+    # initialize status vars
+    advertising = 0
+    connected = 0
+    encrypted = 0
+    
+    # initialize simple GPIO debouncing test var to 0 (first press will be accepted)
+    gpio_delta = 0
+    
+    # initialize use name
+    user_name_buf(0:1) = $42 # 'B'
+    user_name_buf(1:1) = $6c # 'l'
+    user_name_buf(2:1) = $75 # 'u'
+    user_name_buf(3:1) = $65 # 'e'
+    user_name_buf(4:1) = $67 # 'g'
+    user_name_buf(5:1) = $69 # 'i'
+    user_name_buf(6:1) = $67 # 'g'
+    user_name_buf(7:1) = $61 # 'a'
+    user_name_len = 8
+    
+    # initialize greeting
+    greeting_buf(0:1) = $48 # 'H'
+    greeting_buf(1:1) = $65 # 'e'
+    greeting_buf(2:1) = $6c # 'l'
+    greeting_buf(3:1) = $6c # 'l'
+    greeting_buf(4:1) = $6f # 'o'
+    greeting_buf(5:1) = $2c # ','
+    greeting_buf(6:1) = $20 # ' '
+    memcpy(greeting_buf(7), user_name_buf(0), user_name_len)
+    greeting_buf(7 + user_name_len:1) = $21 # '!'
+    # (when we write the greeting to the c_greeting attribute later,
+    # it will always be user_name_len+8 bytes long)
+
+    # set user name attribute value
+    call attributes_write(c_user_name, 0, 8, user_name_buf(0:8))
+
+    # enable interrupt on P0_0 and P0_1 rising edge
+    # (parameters are port=0, bitmask=0b00000011, edge=rising)
+    call hardware_io_port_config_irq(0, 3, 0)
+end
+
+# catch new or updated connection
+event connection_status(connection, flags, address, address_type, conn_interval, timeout, latency, bonding)
+    # check for "new connection established" event
+    if (flags & $05) = $05 then
+        # update status vars
+        advertising = 0
+        connected = 1
+    end if
+    
+    # check for "encrypted" status (e.g. connected + bonded)
+    if (flags & $02) = $02 then
+        # update status fars
+        encrypted = 1
+    end if
+end
+
+# catch disconnection
+event connection_disconnected(handle, result)
+    # if disconnected, return to advertisement mode (disabled for lab environment)
+    #call gap_set_mode(gap_general_discoverable, gap_undirected_connectable)
+
+    # update status vars
+    connected = 0
+    encrypted = 0
+end
+
+# catch GPIO interrupt
+event hardware_io_port_status(timestamp, port, irq, state)
+    # only accept this press if it's more then 100ms after the last one (32768 = 1 sec)
+    if timestamp - gpio_delta > 3277 then
+        if port = 0 then
+            if (irq & 1) = 1 && connected = 0 then
+                # P0_0 is HIGH and the source of this interrupt
+                # toggle advertising mode if we aren't connected
+                
+                if advertising = 0 then
+                    # update status vars
+                    advertising = 1
+
+                    # start advertising in general discoverable / undirected connectable mode (normal)
+                    call gap_set_mode(gap_general_discoverable, gap_undirected_connectable)
+                else
+                    # update status vars
+                    advertising = 0
+
+                    # stop advertising
+                    call gap_set_mode(0, 0)
+                end if
+            end if
+            
+            if (irq & 2) = 2 && connected = 1 then
+                # P0_1 is HIGH and the source of this interrupt
+                # write greeting value if connected
+                
+                # write value to c_greeting attribute, which will push the data
+                # to the remote client if they have enabled indications on it
+                call attributes_write(c_greeting, 0, user_name_len + 8, greeting_buf(0:user_name_len + 8))
+            end if
+        end if
+        
+        # update last delta to current time
+        gpio_delta = timestamp
+    end if
+end
+
+# catch remote write of attribute value
+event attributes_value(connection, reason, handle, offset, value_len, value_data)
+    # check to make sure it's the one we're interested in
+    if handle = c_user_name then
+        # copying new data info user name buffer and save length
+        memcpy(user_name_buf(0), value_data(0), value_len)
+        user_name_len = value_len
+        
+        # update greeting string to use the new name
+        memcpy(greeting_buf(7), user_name_buf(0), user_name_len)
+        greeting_buf(7 + user_name_len:1) = $21 # '!'
+    end if
+end
+
+# catch remote read request of "user"-type attribute value
+event attributes_user_read_request(connection, handle, offset, maxsize)
+    # check to make sure it's the one we're interested in
+    if handle = c_port_status then
+        # IO port status, so now were going to read the status, store it, and send it back
+        
+        # read and store Port0
+        call hardware_io_port_read(0, $ff)(ipr_result, ipr_port, ipr_data)
+        io_buf(0:1) = ipr_data
+
+        # read and store Port1
+        call hardware_io_port_read(1, $ff)(ipr_result, ipr_port, ipr_data)
+        io_buf(1:1) = ipr_data
+
+        # read and store Port2 (only 3 pins available, mask is 0x07)
+        call hardware_io_port_read(2, $07)(ipr_result, ipr_port, ipr_data)
+        io_buf(2:1) = ipr_data
+        
+        # send back buffer value
+        call attributes_user_read_response(connection, 0, 3, io_buf(0:3))
+    end if
+end

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<configuration>
+    <!-- 1800: org.bluetooth.service.generic_access -->
+    <service uuid="1800" id="s_generic_access">
+        <description>Generic Access</description>
+
+        <!-- 2A00: org.bluetooth.characteristic.gap.device_name -->
+        <characteristic uuid="2A00" id="c_device_name">
+            <description>Device Name</description>
+            <properties read="true" const="true" />
+            <value>Hello IO Demo</value>
+        </characteristic>
+
+        <!-- 2A01: org.bluetooth.characteristic.gap.appearance -->
+        <characteristic uuid="2A01" id="c_appearance">
+            <description>Appearance</description>
+            <properties read="true" const="true" />
+            <!-- Generic device, Generic category -->
+            <value type="hex">0000</value>
+         </characteristic>
+    </service>
+
+    <!-- custom Hello IO service -->
+    <service uuid="1006e5f7-9f72-4317-8a6c-b640b4a56659" advertise="true">
+        <description>Hello IO Service</description>
+        <characteristic uuid="e2df8530-49bc-4a9c-b7c2-79b6f9c1a9eb" id="c_user_name">
+            <description>Hello User Name</description>
+            <properties read="true" write="true" />
+            <value length="12" variable_length="true" />
+        </characteristic>
+        <characteristic uuid="2fe67f97-2797-440c-9b8e-9d0ef2415df4" id="c_greeting">
+            <description>Hello Greeting</description>
+            <properties indicate="true" />
+            <value length="20" variable_length="true" />
+        </characteristic>
+        <characteristic uuid="12b45989-8e38-42e4-afb6-f68cc2be254b" id="c_port_status">
+            <description>Hello Port Status</description>
+            <properties read="true" />
+            <value length="3" type="user" />
+        </characteristic>
+    </service>
+</configuration>

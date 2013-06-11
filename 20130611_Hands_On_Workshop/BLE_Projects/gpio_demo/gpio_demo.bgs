@@ -14,7 +14,7 @@ dim advertising     # advertising status (0=off, 1=on)
 dim io_status(3)    # port status characteristic local uint8array container
 dim ipr_result      # container for io_port_read() call's returned "result" value (uint16)
 dim ipr_port        # container for io_port_read() call's returned "port" value (uint8)
-dim ipr_data        # container for io_port_read() call's returned "port" value (uint8)
+dim ipr_data        # container for io_port_read() call's returned "data" value (uint8)
 
 
 event system_boot(major, minor, patch, build, ll_version, protocol, hw)
