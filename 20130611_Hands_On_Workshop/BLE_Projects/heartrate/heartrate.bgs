@@ -18,6 +18,11 @@ event system_boot(major, minor, patch, build, ll_version, protocol, hw)
     call hardware_set_soft_timer(32768, 0, 0)
 end
 
+event connection_disconnected(handle, result)
+    # start advertising again after disconnection
+    call gap_set_mode(gap_general_discoverable, gap_undirected_connectable)
+end
+
 event hardware_soft_timer(handle)
     # initiate potentiometer reading on P0_6
     call hardware_adc_read(6, 1, 2)
@@ -32,9 +37,4 @@ event hardware_adc_result(input, value)
 
     # write value to measurement attribute
     call attributes_write(c_heartrate_measurement, 0, 2, measurement(0:2))
-end
-
-event connection_disconnected(handle, result)
-    # start advertising again after disconnection
-    call gap_set_mode(gap_general_discoverable, gap_undirected_connectable)
 end
