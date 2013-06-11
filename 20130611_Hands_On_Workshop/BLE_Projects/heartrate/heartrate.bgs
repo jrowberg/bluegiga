@@ -1,0 +1,40 @@
+# ================================================================
+# BGScript demo: Heart rate sensor lab exercise source
+# Jeff Rowberg <jeff.rowberg@bluegiga.com>
+# ----------------------------------------------------------------
+#
+# CHANGELOG:
+#   2013-06-09 - Initial release
+#
+# ================================================================
+
+dim measurement(2)  # buffer for building measurement attribute value
+
+event system_boot(major, minor, patch, build, ll_version, protocol, hw)
+    # start advertising in connectable mode
+    call gap_set_mode(gap_general_discoverable, gap_undirected_connectable)
+
+    # start repeating 1-second timer
+    call hardware_set_soft_timer(32768, 0, 0)
+end
+
+event hardware_soft_timer(handle)
+    # initiate potentiometer reading on P0_6
+    call hardware_adc_read(6, 1, 2)
+end
+
+event hardware_adc_result(input, value)
+    # build simple characteristic value response (flags byte = 0x02)
+    measurement(0:1) = 2
+    
+    # scale the reading from heart rate value 20-224
+    measurement(1:1) = value / 160 + 20
+
+    # write value to measurement attribute
+    call attributes_write(c_heartrate_measurement, 0, 2, measurement(0:2))
+end
+
+event connection_disconnected(handle, result)
+    # start advertising again after disconnection
+    call gap_set_mode(gap_general_discoverable, gap_undirected_connectable)
+end
